@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF Signer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&family=Dancing+Script:wght@600&family=IBM+Plex+Sans:wght@400;500;600&family=Mrs+Saint+Delafield&family=Source+Serif+4:wght@600&display=swap">
+<style>
+/* Layout idea: a fixed tool rail beside a desk of paper pages; marks sit on the pages in blue ink. */
+:root {
+  --desk: #e4e8ee;
+  --panel: #f6f7fa;
+  --ink: #161a21;
+  --muted: #5a6372;
+  --line: #ccd2dc;
+  --accent: #22399a;
+  --accent-ink: #ffffff;
+  --danger: #b3261e;
+  --font-display: "Source Serif 4", Georgia, serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --desk: #12151b; --panel: #1a1e26; --ink: #e8ebf1; --muted: #9aa3b2;
+    --line: #2d3440; --accent: #8fa4ff; --accent-ink: #10162e; --danger: #ff8a80;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --desk: #12151b; --panel: #1a1e26; --ink: #e8ebf1; --muted: #9aa3b2;
+  --line: #2d3440; --accent: #8fa4ff; --accent-ink: #10162e; --danger: #ff8a80;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--desk); color: var(--ink); font: 400 15px/1.45 var(--font-body); }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+.app { height: 100%; display: flex; flex-direction: column; }
+.bar { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand svg { color: var(--accent); }
+h1 { margin: 0; font: 600 20px/1 var(--font-display); }
+.fname { color: var(--muted); font-size: 13px; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; background: transparent; font-weight: 500; text-decoration: none; }
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.small { padding: 5px 10px; font-size: 13px; }
+
+.layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px 1fr; }
+.panel { overflow: auto; padding: 18px 16px; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 22px; }
+.panel h2 { margin: 0 0 8px; font: 600 12px/1 var(--font-body); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.sigbox { height: 92px; border: 1px dashed var(--line); border-radius: 8px; display: grid; place-items: center; background: #fff; padding: 8px; }
+.sigbox img { max-width: 100%; max-height: 100%; }
+.sigbox span { color: #6b7280; font-size: 13px; }
+.sigbtn { margin-top: 8px; width: 100%; }
+.tools { display: grid; gap: 8px; }
+.tool { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: transparent; text-align: left; }
+.tool:hover:not(:disabled) { border-color: var(--accent); }
+.tool[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.tool:disabled { opacity: .45; cursor: not-allowed; }
+.tool b { font-weight: 500; }
+.tool small { display: block; color: var(--muted); font-size: 12px; }
+.hint { margin: 10px 0 0; color: var(--muted); font-size: 13px; min-height: 2.9em; }
+.count { font-variant-numeric: tabular-nums; }
+.fine { color: var(--muted); font-size: 12.5px; margin: 0; }
+
+.stage { overflow: auto; padding: 24px 16px 48px; }
+.stage.placing .layer { cursor: crosshair; }
+.drop { max-width: 560px; margin: 8vh auto 0; padding: 40px 24px; border: 2px dashed var(--line); border-radius: 14px; text-align: center; background: color-mix(in srgb, var(--panel) 70%, transparent); }
+.drop.over { border-color: var(--accent); }
+.drop h2 { margin: 0 0 6px; font: 600 24px/1.2 var(--font-display); text-wrap: balance; }
+.drop p { margin: 0 0 20px; color: var(--muted); }
+.drop .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+.pagewrap { margin: 0 auto 28px; width: min(100%, 860px); }
+.plabel { font-size: 12px; color: var(--muted); margin: 0 0 6px 2px; font-variant-numeric: tabular-nums; }
+.sheet { position: relative; width: 100%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.18), 0 8px 24px rgba(0,0,0,.14); container-type: inline-size; }
+.sheet canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.layer { position: absolute; inset: 0; touch-action: pan-y; }
+
+.item { position: absolute; touch-action: none; outline: 1.5px dashed transparent; outline-offset: 2px; }
+.item:hover, .item.sel { outline-color: var(--accent); }
+.item.sig { cursor: grab; }
+.item.sig:active { cursor: grabbing; }
+.item.sig img { width: 100%; height: 100%; display: block; pointer-events: none; user-select: none; }
+.item.text { height: calc(var(--fs) * 150cqw); }
+.item.text:hover, .item.text.sel { background: rgba(34,57,154,.07); }
+.item .txt { width: 100%; height: 100%; border: 0; padding: 0; margin: 0; background: transparent; color: #111; outline: none; font-family: Helvetica, Arial, sans-serif; font-size: calc(var(--fs) * 100cqw); line-height: 1.5; }
+.chip, .grip, .handle { display: none; }
+.item.sel .chip { display: flex; }
+.item.sel .grip { display: block; }
+.item.sel .handle { display: block; }
+.chip { position: absolute; right: 0; bottom: 100%; margin-bottom: 6px; gap: 2px; padding: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.18); z-index: 3; }
+.chip button { min-width: 28px; height: 28px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); font-size: 13px; font-weight: 600; }
+.chip button:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.chip button.del:hover { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+.grip { position: absolute; left: 0; bottom: 100%; margin-bottom: 6px; height: 32px; padding: 0 10px; line-height: 30px; font-size: 12px; font-weight: 600; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; cursor: grab; z-index: 3; touch-action: none; }
+.handle { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; cursor: nwse-resize; z-index: 3; touch-action: none; }
+.handle::before { content: ""; position: absolute; inset: -12px; }
+
+.overlay { position: fixed; inset: 0; background: rgba(8,10,16,.55); display: grid; place-items: center; padding: 16px; z-index: 20; }
+.modal { width: min(640px, 100%); max-height: 100%; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+.mhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.mhead h2 { margin: 0; font: 600 20px/1.2 var(--font-display); }
+.icon { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; font-size: 20px; line-height: 1; }
+.icon:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+.tab { padding: 8px 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-weight: 500; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.padwrap { position: relative; background: #fff; border: 1px solid var(--line); border-radius: 10px; height: 200px; }
+#pad { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.baseline { position: absolute; left: 24px; right: 24px; bottom: 44px; border-top: 1px solid #b9c0cc; pointer-events: none; }
+.baseline span { position: absolute; top: 4px; left: 0; font-size: 12px; color: #7b8494; }
+.mrow { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+label.lbl { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+#typeInput { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #111; }
+.fonts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-top: 12px; }
+.fontcard { padding: 8px 12px; min-height: 76px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #111; overflow: hidden; text-align: center; }
+.fontcard[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.fontcard span { font-size: 40px; line-height: 1.1; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload { display: grid; gap: 12px; }
+.uppreview { min-height: 120px; background: #fff; border: 1px solid var(--line); border-radius: 10px; display: grid; place-items: center; padding: 10px; color: #6b7280; font-size: 13px; }
+.uppreview canvas { max-width: 100%; max-height: 160px; }
+.mfoot { display: flex; align-items: center; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+.mfoot .sp { margin-left: auto; display: flex; gap: 8px; }
+.inks { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); }
+.ink { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); }
+.ink[aria-pressed="true"] { border-color: var(--ink); }
+.remember { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); }
+.err { color: var(--danger); font-size: 13px; margin: 8px 0 0; min-height: 1.2em; }
+
+#toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: min(92vw, 520px); padding: 10px 16px; border-radius: 10px; background: var(--ink); color: var(--desk); font-size: 14px; z-index: 40; box-shadow: 0 6px 24px rgba(0,0,0,.3); }
+
+@media (max-width: 760px) {
+  .layout { display: block; overflow: auto; }
+  .panel { border-right: 0; border-bottom: 1px solid var(--line); }
+  .stage { overflow: visible; }
+  .tools { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21c3-1 5-3 6-6"/><path d="M9 15 19.5 4.5a2.1 2.1 0 0 1 3 3L12 18l-4 1z" transform="translate(-2 0)"/><path d="M13 21h8"/></svg>
+      <h1>PDF Signer</h1>
+    </div>
+    <div class="fname" id="fileName" hidden></div>
+    <div class="actions">
+      <label class="btn" for="pdfInput">Open PDF</label>
+      <input id="pdfInput" type="file" accept="application/pdf,.pdf" hidden>
+      <button class="btn primary" id="downloadBtn" type="button" disabled>Download signed PDF</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="panel" aria-label="Signing tools">
+      <section>
+        <h2>Your signature</h2>
+        <div class="sigbox" id="sigPreview"><span>No signature yet</span></div>
+        <button class="btn sigbtn" id="sigEdit" type="button">Create signature</button>
+      </section>
+      <section>
+        <h2>Add to page</h2>
+        <div class="tools">
+          <button class="tool" id="toolSig" type="button" aria-pressed="false" disabled><span><b>Signature</b><small>Place and resize</small></span></button>
+          <button class="tool" id="toolDate" type="button" aria-pressed="false" disabled><span><b>Today's date</b><small>Editable text</small></span></button>
+          <button class="tool" id="toolText" type="button" aria-pressed="false" disabled><span><b>Text</b><small>Name, title, initials</small></span></button>
+        </div>
+        <p class="hint" id="hint">Open a PDF, then pick what to add.</p>
+      </section>
+      <section>
+        <h2>This document</h2>
+        <p class="fine count" id="count">No marks placed.</p>
+      </section>
+      <p class="fine">Files are read and signed inside this browser tab and are never uploaded. The result is a visual signature, not a certificate-based digital signature.</p>
+    </aside>
+
+    <main class="stage" id="stage">
+      <div class="drop" id="drop">
+        <h2>Drop a PDF here to sign it</h2>
+        <p>Draw, type or upload your signature, place it on the page, and download the signed copy.</p>
+        <div class="row">
+          <label class="btn primary" for="pdfInput">Choose a PDF</label>
+          <button class="btn" id="sampleBtn" type="button">Try a sample document</button>
+        </div>
+      </div>
+      <div id="pages" hidden></div>
+    </main>
+  </div>
+</div>
+
+<div class="overlay" id="sigModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sigTitle">
+    <div class="mhead"><h2 id="sigTitle">Create your signature</h2><button class="icon" id="sigClose" type="button" aria-label="Close">&times;</button></div>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" id="tab-draw" data-tab="draw" aria-selected="true" type="button">Draw</button>
+      <button class="tab" role="tab" id="tab-type" data-tab="type" aria-selected="false" type="button">Type</button>
+      <button class="tab" role="tab" id="tab-upload" data-tab="upload" aria-selected="false" type="button">Upload</button>
+    </div>
+
+    <div data-pane="draw">
+      <div class="padwrap"><canvas id="pad" aria-label="Signature drawing area"></canvas><div class="baseline"><span>Sign above the line</span></div></div>
+      <div class="mrow"><button class="btn small" id="padUndo" type="button">Undo stroke</button><button class="btn small" id="padClear" type="button">Clear</button></div>
+    </div>
+
+    <div data-pane="type" hidden>
+      <label class="lbl" for="typeInput">Your name</label>
+      <input id="typeInput" type="text" placeholder="Type your full name" autocomplete="off" maxlength="60">
+      <div class="fonts" id="fontList"></div>
+    </div>
+
+    <div data-pane="upload" class="upload" hidden>
+      <div><label class="lbl" for="sigFile">Photo or scan of your signature on white paper</label><input id="sigFile" type="file" accept="image/*"></div>
+      <div class="uppreview" id="upPreview">No image chosen</div>
+    </div>
+
+    <p class="err" id="sigErr" role="alert"></p>
+    <div class="mfoot">
+      <div class="inks" id="inkRow">Ink
+        <button class="ink" id="inkBlue" type="button" aria-pressed="true" aria-label="Blue ink" style="background:#1c2f9c"></button>
+        <button class="ink" id="inkBlack" type="button" aria-pressed="false" aria-label="Black ink" style="background:#14161a"></button>
+      </div>
+      <label class="remember"><input type="checkbox" id="remember" checked> Remember on this device</label>
+      <div class="sp"><button class="btn" id="sigCancel" type="button">Cancel</button><button class="btn primary" id="sigUse" type="button">Use signature</button></div>
+    </div>
+  </div>
+</div>
+<div id="toast" role="status" hidden></div>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (s) { return document.querySelector(s); };
+  var clamp = function (v, a, b) { return Math.min(b, Math.max(a, v)); };
+
+  var toastTimer;
+  function toast(msg) {
+    var t = $('#toast'); t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.hidden = true; }, 4500);
+  }
+
+  if (!window['pdfjs-dist/build/pdf'] || !window.PDFLib) {
+    $('#drop').querySelector('p').textContent = 'The PDF libraries could not be loaded. Check your connection and reload the page.';
+    return;
+  }
+  var pdfjsLib = window['pdfjs-dist/build/pdf'];
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  /* ---------- state ---------- */
+  var pdfBytes = null, pdfName = 'document.pdf', pages = [], items = [], layers = [];
+  var selId = null, tool = null, sig = null, uid = 0, observer = null, downloads = null;
+  var STORE_KEY = 'pdfsigner.signature.v1';
+
+  /* ---------- downloads capability ---------- */
+  try {
+    if (window.claude && window.claude.use) {
+      window.claude.use('downloads').then(function (d) { downloads = d; }).catch(function () {});
+    }
+  } catch (e) {}
+
+  /* ---------- opening a PDF ---------- */
+  function todayStr() {
+    return new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  }
+
+  async function openPdf(bytes, name) {
+    var head = String.fromCharCode.apply(null, bytes.subarray(0, 5));
+    if (head.indexOf('%PDF') !== 0) { toast('That file is not a PDF.'); return; }
+    try {
+      var doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+      var ps = [];
+      for (var i = 1; i <= doc.numPages; i++) {
+        var p = await doc.getPage(i);
+        var vp = p.getViewport({ scale: 1 });
+        ps.push({ page: p, w: vp.width, h: vp.height, rot: p.rotate || 0 });
+      }
+      await PDFLib.PDFDocument.load(bytes.slice(), { updateMetadata: false });
+      pdfBytes = bytes; pdfName = name || 'document.pdf'; pages = ps; items = []; selId = null; tool = null;
+      buildPages();
+      $('#drop').hidden = true; $('#pages').hidden = false;
+      $('#fileName').textContent = pdfName; $('#fileName').hidden = false;
+      $('#stage').scrollTop = 0;
+      ['toolSig', 'toolDate', 'toolText'].forEach(function (id) { $('#' + id).disabled = false; });
+      updateUi();
+      if (ps.some(function (p) { return p.rot % 360 !== 0; })) toast('Some pages are rotated. Check placement in the downloaded file.');
+    } catch (err) {
+      var msg = err && err.name === 'PasswordException' ? 'This PDF is password protected. Remove the password and try again.'
+        : (err && /encrypt/i.test(String(err.message))) ? 'This PDF is encrypted, so it cannot be signed here.'
+        : 'Could not read this PDF. It may be damaged.';
+      toast(msg);
+    }
+  }
+
+  async function openFile(file) {
+    if (!file) return;
+    var buf = await file.arrayBuffer();
+    openPdf(new Uint8Array(buf), file.name);
+  }
+  $('#pdfInput').addEventListener('change', function (e) { openFile(e.target.files[0]); e.target.value = ''; });
+  var stage = $('#stage');
+  stage.addEventListener('dragover', function (e) { e.preventDefault(); $('#drop').classList.add('over'); });
+  stage.addEventListener('dragleave', function () { $('#drop').classList.remove('over'); });
+  stage.addEventListener('drop', function (e) {
+    e.preventDefault(); $('#drop').classList.remove('over');
+    var f = e.dataTransfer && e.dataTransfer.files[0]; if (f) openFile(f);
+  });
+
+  async function makeSample() {
+    var L = PDFLib, d = await L.PDFDocument.create();
+    var pg = d.addPage([612, 792]);
+    var f = await d.embedFont(L.StandardFonts.Helvetica), b = await d.embedFont(L.StandardFonts.HelveticaBold);
+    var ink = L.rgb(0.1, 0.1, 0.12), grey = L.rgb(0.4, 0.4, 0.45);
+    pg.drawText('Consulting Services Agreement', { x: 72, y: 704, size: 20, font: b, color: ink });
+    pg.drawText('Effective date: ____________', { x: 72, y: 680, size: 10.5, font: f, color: grey });
+    var y = 646;
+    var paras = [
+      '1. Services. Consultant will provide design and prototyping services to Client as described in the attached statement of work, beginning on the effective date.',
+      '2. Fees. Client will pay Consultant a fixed fee of $4,800, invoiced in two equal installments: one on signing and one on delivery. Invoices are due within 30 days.',
+      '3. Ownership. Work product transfers to Client on payment in full. Consultant keeps the right to show the work in a portfolio unless Client asks otherwise in writing.',
+      '4. Confidentiality. Each party will keep the other\'s non-public information private and use it only for this engagement.',
+      '5. Term. This agreement ends when the services are delivered, or earlier if either party gives 14 days\' written notice.'
+    ];
+    paras.forEach(function (t) {
+      var words = t.split(' '), line = '';
+      words.forEach(function (w) {
+        var test = line ? line + ' ' + w : w;
+        if (f.widthOfTextAtSize(test, 11) > 468) { pg.drawText(line, { x: 72, y: y, size: 11, font: f, color: ink }); y -= 16; line = w; } else line = test;
+      });
+      if (line) { pg.drawText(line, { x: 72, y: y, size: 11, font: f, color: ink }); y -= 28; }
+    });
+    function sigBlock(x, who) {
+      pg.drawText(who, { x: x, y: 250, size: 11, font: b, color: ink });
+      pg.drawLine({ start: { x: x, y: 190 }, end: { x: x + 200, y: 190 }, thickness: 0.8, color: ink });
+      pg.drawText('Signature', { x: x, y: 176, size: 9, font: f, color: grey });
+      pg.drawLine({ start: { x: x, y: 130 }, end: { x: x + 200, y: 130 }, thickness: 0.8, color: ink });
+      pg.drawText('Date', { x: x, y: 116, size: 9, font: f, color: grey });
+    }
+    sigBlock(72, 'Client'); sigBlock(340, 'Consultant');
+    pg.drawText('Sample document for trying out PDF Signer. Not a real agreement.', { x: 72, y: 48, size: 9, font: f, color: grey });
+    return await d.save();
+  }
+  $('#sampleBtn').addEventListener('click', async function () {
+    try { openPdf(await makeSample(), 'sample-agreement.pdf'); } catch (e) { toast('Could not build the sample document.'); }
+  });
+
+  /* ---------- page rendering ---------- */
+  function buildPages() {
+    var root = $('#pages'); root.innerHTML = ''; layers = [];
+    if (observer) observer.disconnect();
+    observer = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { observer.unobserve(e.target); renderCanvas(+e.target.dataset.i); } });
+    }, { rootMargin: '900px 0px' });
+    pages.forEach(function (p, i) {
+      var wrap = document.createElement('section'); wrap.className = 'pagewrap';
+      wrap.innerHTML = '<div class="plabel">Page ' + (i + 1) + ' of ' + pages.length + '</div>' +
+        '<div class="sheet" data-i="' + i + '" style="aspect-ratio:' + p.w + ' / ' + p.h + '"><canvas></canvas><div class="layer"></div></div>';
+      root.appendChild(wrap);
+      var sheet = wrap.querySelector('.sheet');
+      layers[i] = sheet.querySelector('.layer');
+      layers[i].addEventListener('pointerdown', function (e) { onLayerDown(e, i); });
+      observer.observe(sheet);
+    });
+  }
+  async function renderCanvas(i) {
+    var p = pages[i], canvas = document.querySelector('.sheet[data-i="' + i + '"] canvas');
+    if (!p || !canvas) return;
+    var scale = Math.min(3, 1400 / p.w), vp = p.page.getViewport({ scale: scale });
+    canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
+    try { await p.page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise; } catch (e) {}
+  }
+
+  /* ---------- tools ---------- */
+  function setTool(t) { tool = (t === tool) ? null : t; refreshTool(); }
+  function refreshTool() {
+    [['toolSig', 'sig'], ['toolDate', 'date'], ['toolText', 'text']].forEach(function (x) {
+      $('#' + x[0]).setAttribute('aria-pressed', String(tool === x[1]));
+    });
+    stage.classList.toggle('placing', !!tool);
+    var h = $('#hint');
+    if (!pages.length) h.textContent = 'Open a PDF, then pick what to add.';
+    else if (tool) h.textContent = 'Click the page where it should go. Press Esc to cancel.';
+    else h.textContent = 'Pick what to add, then click a page. Drag marks to move them.';
+  }
+  $('#toolSig').addEventListener('click', function () {
+    if (!sig) { pendingTool = true; openModal(); return; }
+    setTool('sig');
+  });
+  $('#toolDate').addEventListener('click', function () { setTool('date'); });
+  $('#toolText').addEventListener('click', function () { setTool('text'); });
+
+  function onLayerDown(e, i) {
+    if (e.target !== layers[i]) return;
+    if (tool) { place(e, i); } else select(null);
+  }
+
+  function place(e, i) {
+    var r = layers[i].getBoundingClientRect(), p = pages[i];
+    var fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height, it;
+    if (tool === 'sig') {
+      if (!sig) { pendingTool = true; openModal(); return; }
+      var w = 0.26, aspect = sig.h / sig.w;
+      it = { type: 'sig', url: sig.url, aspect: aspect, w: w, h: w * aspect * (p.w / p.h) };
+    } else {
+      var fs = 12 / p.w;
+      it = { type: 'text', fs: fs, w: tool === 'date' ? 0.26 : 0.34, h: fs * 1.5 * (p.w / p.h), text: tool === 'date' ? todayStr() : '' };
+    }
+    it.id = ++uid; it.page = i;
+    it.x = clamp(fx - it.w / 2, 0, 1 - it.w); it.y = clamp(fy - it.h / 2, 0, 1 - it.h);
+    items.push(it); mountItem(it); select(it.id); setTool(null); updateUi();
+    if (it.type === 'text') { var inp = it.el.querySelector('input'); if (inp) inp.focus(); }
+  }
+
+  function pos(it) {
+    var s = it.el.style;
+    s.left = (it.x * 100) + '%'; s.top = (it.y * 100) + '%'; s.width = (it.w * 100) + '%';
+    if (it.type === 'sig') s.height = (it.h * 100) + '%'; else s.setProperty('--fs', it.fs);
+  }
+
+  function mkBtn(cls, label, text, fn) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = cls || '';
+    b.setAttribute('aria-label', label); b.textContent = text;
+    b.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+    b.addEventListener('click', function (e) { e.stopPropagation(); fn(); });
+    return b;
+  }
+
+  function resizeText(it, factor) {
+    var p = pages[it.page];
+    it.fs = clamp(it.fs * factor, 6 / p.w, 48 / p.w);
+    it.h = it.fs * 1.5 * (p.w / p.h);
+    it.y = clamp(it.y, 0, 1 - it.h);
+    pos(it);
+  }
+  function removeItem(it) {
+    it.el.remove(); items = items.filter(function (x) { return x !== it; });
+    if (selId === it.id) selId = null; updateUi();
+  }
+
+  function mountItem(it) {
+    var el = document.createElement('div'); el.className = 'item ' + it.type; el.dataset.id = it.id; it.el = el;
+    pos(it);
+    var chip = document.createElement('div'); chip.className = 'chip';
+    if (it.type === 'sig') {
+      var img = new Image(); img.src = it.url; img.alt = 'Signature'; img.draggable = false; el.appendChild(img);
+      el.addEventListener('pointerdown', function (e) { if (e.target.closest('.chip,.handle')) return; startDrag(e, it, el); });
+    } else {
+      var inp = document.createElement('input'); inp.type = 'text'; inp.className = 'txt'; inp.value = it.text;
+      inp.placeholder = 'Type here'; inp.setAttribute('aria-label', 'Text on page'); inp.autocomplete = 'off';
+      inp.addEventListener('input', function () { it.text = inp.value; });
+      inp.addEventListener('focus', function () { select(it.id); });
+      el.appendChild(inp);
+      var grip = document.createElement('div'); grip.className = 'grip'; grip.textContent = 'Move';
+      grip.addEventListener('pointerdown', function (e) { startDrag(e, it, grip); });
+      el.appendChild(grip);
+      chip.appendChild(mkBtn('', 'Smaller text', 'A−', function () { resizeText(it, 0.9); }));
+      chip.appendChild(mkBtn('', 'Larger text', 'A+', function () { resizeText(it, 1.1); }));
+    }
+    chip.appendChild(mkBtn('del', 'Delete', '×', function () { removeItem(it); }));
+    el.appendChild(chip);
+    var handle = document.createElement('div'); handle.className = 'handle';
+    handle.addEventListener('pointerdown', function (e) { startResize(e, it, handle); });
+    el.appendChild(handle);
+    layers[it.page].appendChild(el);
+  }
+
+  function select(id) {
+    selId = id;
+    items.forEach(function (it) { it.el.classList.toggle('sel', it.id === id); });
+  }
+
+  function startDrag(e, it, target) {
+    e.preventDefault(); e.stopPropagation(); select(it.id);
+    var r = layers[it.page].getBoundingClientRect(), sx = e.clientX, sy = e.clientY, ox = it.x, oy = it.y;
+    target.setPointerCapture(e.pointerId);
+    function mv(ev) {
+      it.x = clamp(ox + (ev.clientX - sx) / r.width, 0, 1 - it.w);
+      it.y = clamp(oy + (ev.clientY - sy) / r.height, 0, 1 - it.h);
+      pos(it);
+    }
+    function up() { target.removeEventListener('pointermove', mv); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up); }
+    target.addEventListener('pointermove', mv); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
+  }
+
+  function startResize(e, it, target) {
+    e.preventDefault(); e.stopPropagation(); select(it.id);
+    var p = pages[it.page], r = layers[it.page].getBoundingClientRect(), sx = e.clientX, ow = it.w;
+    target.setPointerCapture(e.pointerId);
+    function mv(ev) {
+      var nw = ow + (ev.clientX - sx) / r.width;
+      if (it.type === 'sig') {
+        var k = it.aspect * (p.w / p.h);
+        nw = clamp(nw, 0.05, Math.min(1 - it.x, (1 - it.y) / k));
+        it.w = nw; it.h = nw * k;
+      } else {
+        it.w = clamp(nw, 0.08, 1 - it.x);
+      }
+      pos(it);
+    }
+    function up() { target.removeEventListener('pointermove', mv); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up); }
+    target.addEventListener('pointermove', mv); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      if (!$('#sigModal').hidden) { closeModal(); return; }
+      if (tool) { setTool(null); return; }
+      select(null); return;
+    }
+    if (!selId || e.target.closest('input,textarea')) return;
+    var it = items.filter(function (x) { return x.id === selId; })[0]; if (!it) return;
+    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeItem(it); return; }
+    var step = e.shiftKey ? 0.02 : 0.004, dx = 0, dy = 0;
+    if (e.key === 'ArrowLeft') dx = -step; else if (e.key === 'ArrowRight') dx = step;
+    else if (e.key === 'ArrowUp') dy = -step; else if (e.key === 'ArrowDown') dy = step; else return;
+    e.preventDefault();
+    it.x = clamp(it.x + dx, 0, 1 - it.w); it.y = clamp(it.y + dy, 0, 1 - it.h); pos(it);
+  });
+
+  function updateUi() {
+    var n = items.length;
+    $('#count').textContent = n ? n + (n === 1 ? ' mark placed.' : ' marks placed.') : (pages.length ? 'No marks placed yet.' : 'No marks placed.');
+    $('#downloadBtn').disabled = !n;
+    $('#downloadBtn').title = n ? '' : 'Place at least one mark first';
+    refreshTool();
+  }
+
+  /* ---------- export ---------- */
+  function dataUrlToBytes(u) {
+    var bin = atob(u.split(',')[1]), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  async function exportPdf() {
+    var L = PDFLib, doc = await L.PDFDocument.load(pdfBytes.slice());
+    var font = await doc.embedFont(L.StandardFonts.Helvetica), outPages = doc.getPages(), cache = {};
+    function latin(t) {
+      return Array.from(t).map(function (ch) { try { font.encodeText(ch); return ch; } catch (e) { return '?'; } }).join('');
+    }
+    for (var k = 0; k < items.length; k++) {
+      var it = items[k], pg = outPages[it.page], cb = pg.getCropBox(), W = cb.width, H = cb.height;
+      if (it.type === 'sig') {
+        var img = cache[it.url];
+        if (!img) { img = await doc.embedPng(dataUrlToBytes(it.url)); cache[it.url] = img; }
+        pg.drawImage(img, { x: cb.x + it.x * W, y: cb.y + H - (it.y + it.h) * H, width: it.w * W, height: it.h * H });
+      } else if (it.text && it.text.trim()) {
+        var fs = it.fs * W, t = latin(it.text), maxW = it.w * W;
+        while (fs > 5 && font.widthOfTextAtSize(t, fs) > maxW) fs *= 0.97;
+        pg.drawText(t, { x: cb.x + it.x * W, y: cb.y + H - it.y * H - 1.1 * it.fs * W, size: fs, font: font, color: L.rgb(0.07, 0.07, 0.07) });
+      }
+    }
+    return await doc.save();
+  }
+  $('#downloadBtn').addEventListener('click', async function () {
+    var btn = this, label = btn.textContent;
+    if (!items.length) return;
+    btn.disabled = true; btn.textContent = 'Preparing…';
+    try {
+      var bytes = await exportPdf();
+      var name = pdfName.replace(/\.pdf$/i, '') + '-signed.pdf';
+      if (!downloads) {
+        try { downloads = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (e) { downloads = null; }
+      }
+      if (!downloads) {
+        var url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+        var a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 4000); toast('Saved ' + name);
+      } else {
+        try { await downloads.save({ filename: name, data: new Blob([bytes], { type: 'application/pdf' }) }); toast('Saved ' + name); }
+        catch (err) { if (!err || err.code !== 'declined') toast('Could not save the file' + (err && err.message ? ': ' + err.message : '.')); }
+      }
+    } catch (err) {
+      toast('Could not build the signed PDF.');
+    }
+    btn.textContent = label; btn.disabled = !items.length;
+  });
+
+  /* ---------- signature modal ---------- */
+  var pendingTool = false;
+  var INKS = { blue: '#1c2f9c', black: '#14161a' }, ink = 'blue', tab = 'draw';
+  var strokes = [], drawing = false, uploadCanvas = null;
+  var FONTS = ['Mrs Saint Delafield', 'Caveat', 'Dancing Script'], typeFont = FONTS[0];
+  var pad = $('#pad'), pctx = pad.getContext('2d');
+
+  function setSignature(s) {
+    sig = s;
+    var box = $('#sigPreview'); box.innerHTML = '';
+    if (s) { var im = new Image(); im.src = s.url; im.alt = 'Your signature'; box.appendChild(im); }
+    else { var sp = document.createElement('span'); sp.textContent = 'No signature yet'; box.appendChild(sp); }
+    $('#sigEdit').textContent = s ? 'Change signature' : 'Create signature';
+  }
+  try {
+    var saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+    if (saved && saved.url && saved.w && saved.h) setSignature(saved);
+  } catch (e) {}
+
+  function openModal() {
+    $('#sigModal').hidden = false; $('#sigErr').textContent = '';
+    showTab(tab); sizePad(); redraw(); renderFonts();
+    var t = $('#tab-' + tab); if (t) t.focus();
+  }
+  function closeModal() { $('#sigModal').hidden = true; pendingTool = false; }
+  $('#sigEdit').addEventListener('click', openModal);
+  $('#sigClose').addEventListener('click', closeModal);
+  $('#sigCancel').addEventListener('click', closeModal);
+  $('#sigModal').addEventListener('pointerdown', function (e) { if (e.target === this) closeModal(); });
+
+  function showTab(t) {
+    tab = t;
+    document.querySelectorAll('.tab').forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === t)); });
+    document.querySelectorAll('[data-pane]').forEach(function (p) { p.hidden = p.dataset.pane !== t; });
+    $('#inkRow').hidden = t === 'upload';
+    if (t === 'draw') { sizePad(); redraw(); }
+    if (t === 'type') { renderFonts(); }
+    $('#sigErr').textContent = '';
+  }
+  document.querySelectorAll('.tab').forEach(function (b) { b.addEventListener('click', function () { showTab(b.dataset.tab); }); });
+
+  function setInk(k) {
+    ink = k;
+    $('#inkBlue').setAttribute('aria-pressed', String(k === 'blue'));
+    $('#inkBlack').setAttribute('aria-pressed', String(k === 'black'));
+    redraw(); renderFonts();
+  }
+  $('#inkBlue').addEventListener('click', function () { setInk('blue'); });
+  $('#inkBlack').addEventListener('click', function () { setInk('black'); });
+
+  /* draw pad */
+  function sizePad() {
+    var r = pad.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    if (!r.width) return;
+    pad.width = Math.round(r.width * dpr); pad.height = Math.round(r.height * dpr);
+  }
+  function drawStrokes(ctx, scale) {
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = INKS[ink]; ctx.fillStyle = INKS[ink]; ctx.lineWidth = 3.2 * scale;
+    strokes.forEach(function (s) {
+      if (s.length === 1) { ctx.beginPath(); ctx.arc(s[0].x * scale, s[0].y * scale, 1.7 * scale, 0, 7); ctx.fill(); return; }
+      ctx.beginPath(); ctx.moveTo(s[0].x * scale, s[0].y * scale);
+      for (var i = 1; i < s.length - 1; i++) {
+        var mx = (s[i].x + s[i + 1].x) / 2, my = (s[i].y + s[i + 1].y) / 2;
+        ctx.quadraticCurveTo(s[i].x * scale, s[i].y * scale, mx * scale, my * scale);
+      }
+      var last = s[s.length - 1]; ctx.lineTo(last.x * scale, last.y * scale); ctx.stroke();
+    });
+  }
+  function redraw() {
+    pctx.setTransform(1, 0, 0, 1, 0, 0); pctx.clearRect(0, 0, pad.width, pad.height);
+    drawStrokes(pctx, window.devicePixelRatio || 1);
+  }
+  function padPt(e) { var r = pad.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+  pad.addEventListener('pointerdown', function (e) {
+    e.preventDefault(); pad.setPointerCapture(e.pointerId); drawing = true; strokes.push([padPt(e)]); redraw();
+  });
+  pad.addEventListener('pointermove', function (e) {
+    if (!drawing) return; strokes[strokes.length - 1].push(padPt(e)); redraw();
+  });
+  function endDraw() { drawing = false; }
+  pad.addEventListener('pointerup', endDraw); pad.addEventListener('pointercancel', endDraw);
+  $('#padUndo').addEventListener('click', function () { strokes.pop(); redraw(); });
+  $('#padClear').addEventListener('click', function () { strokes = []; redraw(); });
+  window.addEventListener('resize', function () { if (!$('#sigModal').hidden && tab === 'draw') { sizePad(); redraw(); } });
+
+  /* typed */
+  function renderFonts() {
+    var list = $('#fontList'), name = $('#typeInput').value.trim() || 'Your Name';
+    list.innerHTML = '';
+    FONTS.forEach(function (f) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'fontcard';
+      b.setAttribute('aria-pressed', String(f === typeFont)); b.setAttribute('aria-label', f + ' style');
+      var s = document.createElement('span'); s.textContent = name; s.style.fontFamily = '"' + f + '", cursive';
+      s.style.color = INKS[ink]; if (f === 'Mrs Saint Delafield') s.style.fontSize = '54px';
+      b.appendChild(s);
+      b.addEventListener('click', function () { typeFont = f; renderFonts(); });
+      list.appendChild(b);
+    });
+  }
+  $('#typeInput').addEventListener('input', renderFonts);
+
+  /* upload */
+  $('#sigFile').addEventListener('change', function (e) {
+    var f = e.target.files[0]; if (!f) return;
+    var url = URL.createObjectURL(f), img = new Image();
+    img.onload = function () {
+      var s = Math.min(1, 1000 / img.width), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * s)); c.height = Math.max(1, Math.round(img.height * s));
+      var x = c.getContext('2d'); x.drawImage(img, 0, 0, c.width, c.height);
+      var d = x.getImageData(0, 0, c.width, c.height), px = d.data;
+      for (var i = 0; i < px.length; i += 4) {
+        var lum = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+        var a = lum >= 235 ? 0 : lum <= 150 ? 255 : Math.round((235 - lum) / 85 * 255);
+        px[i + 3] = Math.min(px[i + 3], a);
+      }
+      x.putImageData(d, 0, 0); uploadCanvas = c;
+      var pv = $('#upPreview'); pv.innerHTML = ''; pv.appendChild(c); URL.revokeObjectURL(url);
+    };
+    img.onerror = function () { $('#sigErr').textContent = 'That image could not be read. Try a PNG or JPG.'; URL.revokeObjectURL(url); };
+    img.src = url;
+  });
+
+  /* finish */
+  function trim(src) {
+    var w = src.width, h = src.height, d = src.getContext('2d').getImageData(0, 0, w, h).data;
+    var x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
+      if (d[(y * w + x) * 4 + 3] > 10) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+    if (x1 < 0) return null;
+    var pad6 = 6; x0 = Math.max(0, x0 - pad6); y0 = Math.max(0, y0 - pad6); x1 = Math.min(w - 1, x1 + pad6); y1 = Math.min(h - 1, y1 + pad6);
+    var cw = x1 - x0 + 1, ch = y1 - y0 + 1, s = Math.min(1, 900 / cw);
+    var out = document.createElement('canvas'); out.width = Math.max(1, Math.round(cw * s)); out.height = Math.max(1, Math.round(ch * s));
+    out.getContext('2d').drawImage(src, x0, y0, cw, ch, 0, 0, out.width, out.height);
+    return { url: out.toDataURL('image/png'), w: out.width, h: out.height };
+  }
+
+  $('#sigUse').addEventListener('click', async function () {
+    var err = $('#sigErr'), res = null; err.textContent = '';
+    if (tab === 'draw') {
+      if (!strokes.length) { err.textContent = 'Draw your signature in the box first.'; return; }
+      var c = document.createElement('canvas'), dpr = 2; c.width = pad.clientWidth * dpr; c.height = pad.clientHeight * dpr;
+      var cx = c.getContext('2d'); var prev = pctx; drawStrokes(cx, dpr); res = trim(c); void prev;
+    } else if (tab === 'type') {
+      var text = $('#typeInput').value.trim();
+      if (!text) { err.textContent = 'Type your name first.'; return; }
+      try { await document.fonts.load('140px "' + typeFont + '"', text); } catch (e) {}
+      var t = document.createElement('canvas'), tx = t.getContext('2d');
+      tx.font = '140px "' + typeFont + '", cursive';
+      t.width = Math.ceil(tx.measureText(text).width) + 120; t.height = 320;
+      tx.font = '140px "' + typeFont + '", cursive'; tx.fillStyle = INKS[ink]; tx.textBaseline = 'middle'; tx.fillText(text, 60, 160);
+      res = trim(t);
+    } else {
+      if (!uploadCanvas) { err.textContent = 'Choose an image of your signature first.'; return; }
+      res = trim(uploadCanvas);
+    }
+    if (!res) { err.textContent = 'Nothing to use yet. Try again.'; return; }
+    setSignature(res);
+    if ($('#remember').checked) { try { localStorage.setItem(STORE_KEY, JSON.stringify(res)); } catch (e) {} }
+    else { try { localStorage.removeItem(STORE_KEY); } catch (e) {} }
+    var go = pendingTool; $('#sigModal').hidden = true; pendingTool = false;
+    if (go && pages.length) { tool = 'sig'; refreshTool(); }
+  });
+
+  updateUi();
+})();
+</script>
+</body>
+</html>
